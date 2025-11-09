@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIoT Fall Detector • ESP32 + MPU6050</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <style>
+    :root { --primary:#4361ee; --primary-ghost:#eef2ff; --danger:#ef4444; --success:#10b981; --warning:#f59e0b; --ink:#111827; --muted:#6b7280; --card:#fff; --bg:#f3f4f6; --shadow:0 10px 20px rgba(0,0,0,.06); --radius:14px; }
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;padding:24px}
+    .container{max-width:1320px;margin:0 auto}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .title-wrap{display:flex;align-items:center;gap:10px}
+    .pill{font-size:12px;padding:6px 10px;border-radius:999px;background:var(--primary-ghost);color:var(--primary);font-weight:600}
+    .header h1{font-size:22px;margin:0}
+    .toolbar{display:flex;gap:8px}
+    button.icon{border:none;background:#f1f5ff;color:#3b5bff;border-radius:10px;padding:8px 10px;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+    .metric{grid-column:span 3;display:flex;gap:12px;align-items:center}
+    .metric .icon{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--primary-ghost);color:var(--primary);font-size:20px}
+    .metric .label{font-size:12px;color:var(--muted)}
+    .metric .value{font-size:22px;font-weight:800}
+    .chart-card{grid-column:span 8;height:380px}
+    .chart-wrap{position:relative;height:300px}
+    .side-card{grid-column:span 4}
+    .section-title{font-weight:700;font-size:14px;margin-bottom:8px}
+    .status-badge{display:inline-flex;align-items:center;gap:8px;font-weight:600;padding:8px 12px;border-radius:999px}
+    .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+    .status-ok{background:rgba(16,185,129,.15);color:var(--success)}
+    .status-bad{background:rgba(239,68,68,.15);color:var(--danger)}
+    .muted{color:var(--muted);font-size:12px}
+    .kv{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eceff3}
+    .kv:last-child{border-bottom:none}
+    .events{max-height:240px;overflow:auto}
+    .event{display:flex;gap:12px;padding:10px 0;border-bottom:1px dashed #e9edf3}
+    .event:last-child{border-bottom:none}
+    .event .emo{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:#fff1f2;color:#be123c}
+    .event .meta{font-size:12px;color:var(--muted)}
+    .footer-row{grid-column:span 12;display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+    .tiny{font-size:12px;color:var(--muted)}
+    .row-2{grid-column:span 12;display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .half{grid-column:span 6}
+    .map{height:300px;border-radius:12px;overflow:hidden}
+    .gauge-card{grid-column:span 4}
+    .orientation-card{grid-column:span 4}
+    .alerts-card{grid-column:span 4}
+
+    /* Orientation cube */
+    .cube-wrap{height:260px;display:grid;place-items:center;background:#f8fafc;border-radius:12px;border:1px solid #e5e7eb}
+    .cube{width:100px;height:100px;position:relative;transform-style:preserve-3d;transform:rotateX(0deg) rotateY(0deg) rotateZ(0deg);transition:transform .08s linear}
+    .face{position:absolute;width:100px;height:100px;background:rgba(67,97,238,.12);border:1px solid #c7d2fe;display:grid;place-items:center;font-weight:700;color:#3b82f6}
+    .front{transform:translateZ(50px)}
+    .back{transform:rotateY(180deg) translateZ(50px)}
+    .right{transform:rotateY(90deg) translateZ(50px)}
+    .left{transform:rotateY(-90deg) translateZ(50px)}
+    .top{transform:rotateX(90deg) translateZ(50px)}
+    .bottom{transform:rotateX(-90deg) translateZ(50px)}
+
+    /* POPUP */
+    .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);z-index:50}
+    .popup{width:min(560px,92vw);background:#fff;border-radius:18px;box-shadow:0 25px 60px rgba(0,0,0,.25);padding:22px;text-align:center}
+    .popup h2{margin:10px 0 4px;font-size:22px}
+    .pulse{width:72px;height:72px;border-radius:50%;background:#fee2e2;display:grid;place-items:center;margin:0 auto;animation:pulse 1.2s infinite}
+    .pulse span{font-size:34px;color:#b91c1c}
+    .actions{margin-top:14px;display:flex;gap:10px;justify-content:center}
+    .btn{border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn-primary{background:var(--danger);color:#fff}
+    .btn-ghost{background:#f3f4f6}
+    @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
+
+    @media (max-width:1100px){.metric{grid-column:span 6}.chart-card,.side-card,.half,.gauge-card,.orientation-card,.alerts-card{grid-column:span 12}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title-wrap">
+        <span class="pill">ESP32 · Firebase RTDB</span>
+        <h1>AIoT Fall Detector Dashboard</h1>
+      </div>
+      <div class="toolbar">
+        <button class="icon" id="pauseBtn" title="Pause/Resume">⏸️</button>
+        <button class="icon" id="resetBtn" title="Reset Chart">🔄</button>
+        <button class="icon" id="downloadCsv" title="Download CSV">⬇️ CSV</button>
+      </div>
+    </div>
+
+    <!-- Top metrics -->
+    <div class="grid">
+      <div class="card metric"><div class="icon">↔️</div><div><div class="label">Acceleration X</div><div class="value" id="accelXValue">0.00</div><div class="muted">m/s²</div></div></div>
+      <div class="card metric"><div class="icon">↕️</div><div><div class="label">Acceleration Y</div><div class="value" id="accelYValue">0.00</div><div class="muted">m/s²</div></div></div>
+      <div class="card metric"><div class="icon">⬆️</div><div><div class="label">Acceleration Z</div><div class="value" id="accelZValue">0.00</div><div class="muted">m/s²</div></div></div>
+      <div class="card metric" id="fallStatusCard"><div class="icon" id="fallIcon">🟢</div><div><div class="label">Fall Status</div><div class="value" id="fallStatusText">No Fall</div><div class="muted" id="aiPredictionLine">AI prediction: Not Fall</div></div></div>
+
+      <!-- Chart + Device / Events -->
+      <div class="card chart-card">
+        <div class="section-title">MPU6050 Real‑time Acceleration</div>
+        <div class="chart-wrap"><canvas id="accelChart"></canvas></div>
+      </div>
+
+      <div class="card side-card">
+        <div class="section-title">Device</div>
+        <div class="kv"><span class="muted">Firebase</span><span id="connBadge" class="status-badge status-ok"><span class="status-dot" style="background:var(--success)"></span>Connected</span></div>
+        <div class="kv"><span class="muted">Node</span><code>/devices/esp32_1</code></div>
+        <div class="kv"><span class="muted">Last update</span><span id="lastUpdated">–</span></div>
+        <div class="kv"><span class="muted">amp10x</span><span id="amp10x">–</span></div>
+        <div class="kv"><span class="muted">|gyro| (°/s)</span><span id="gVec">–</span></div>
+        <div class="kv"><span class="muted">Battery</span><span id="batteryPct">–</span></div>
+        <div class="kv"><span class="muted">WiFi RSSI</span><span id="wifiRssi">–</span></div>
+        <div class="kv"><span class="muted">Sampling</span><span id="sampleHz">–</span></div>
+
+        <div class="section-title" style="margin-top:14px;">Recent Fall Events</div>
+        <div class="events" id="events"></div>
+      </div>
+
+      <!-- Row: Risk Gauge • Orientation • Alerts -->
+      <div class="card gauge-card">
+        <div class="section-title">AI Fall Risk</div>
+        <div id="riskGauge"></div>
+      </div>
+      <div class="card orientation-card">
+        <div class="section-title">Body Orientation (est.)</div>
+        <div class="cube-wrap"><div class="cube" id="cube">
+          <div class="face front">F</div>
+          <div class="face back">B</div>
+          <div class="face right">R</div>
+          <div class="face left">L</div>
+          <div class="face top">T</div>
+          <div class="face bottom">D</div>
+        </div></div>
+        <div class="muted" id="anglesReadout">rx: 0°, ry: 0°, rz: 0°</div>
+      </div>
+      <div class="card alerts-card">
+        <div class="section-title">Alerts (Severity)</div>
+        <div class="kv"><span class="muted">Status</span><span id="severityBadge" class="status-badge status-ok"><span class="status-dot" style="background:var(--success)"></span>Normal</span></div>
+        <div class="kv"><span class="muted">High Impact</span><span id="highImpact">0</span></div>
+        <div class="kv"><span class="muted">Falls (Today)</span><span id="fallsToday">0</span></div>
+      </div>
+
+      <!-- Row: Trends & Map -->
+      <div class="row-2">
+        <div class="card half">
+          <div class="section-title">Trends (Session)</div>
+          <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+        </div>
+        <div class="card half">
+          <div class="section-title">Location</div>
+          <div id="map" class="map"></div>
+          <div class="muted" id="gpsReadout">Waiting for GPS…</div>
+        </div>
+      </div>
+
+      <div class="footer-row">
+        <div class="tiny">Chart window: last <span id="windowSize">50</span> samples • CSV contains all session samples</div>
+        <div class="tiny">ESP32 sends: ax, ay, az, gx, gy, gz, amp10x, <b>isFall</b>, timestamp_ms • <code>fallState</code> mirrors status</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FALL POPUP -->
+  <div class="overlay" id="fallOverlay" role="dialog" aria-modal="true">
+    <div class="popup">
+      <div class="pulse"><span>⚠️</span></div>
+      <h2>Fall Detected!</h2>
+      <p class="muted">Received a fall event from <code>/devices/esp32_1</code>.</p>
+      <div class="actions">
+        <button class="btn btn-primary" id="ackBtn">Acknowledge</button>
+        <button class="btn btn-ghost" id="muteBtn">Mute sound</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="alertSound"></audio>
+
+  <script>
+    // ===== Firebase Config =====
+    const firebaseConfig = {
+      apiKey: "AIzaSyAXv119W8eN7PiJ1h13QUw3VPjqlnbvCTE",
+      authDomain: "mpu6050-data-24546.firebaseapp.com",
+      databaseURL: "https://mpu6050-data-24546-default-rtdb.firebaseio.com",
+      projectId: "mpu6050-data-24546",
+      storageBucket: "mpu6050-data-24546.firebasestorage.app",
+      messagingSenderId: "994323596571",
+      appId: "1:994323596571:web:7799b9ce4913d217e67fbe",
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // ===== Refs =====
+    const DEVICE_PATH = "/devices/esp32_1";
+    const imuRef = db.ref(`${DEVICE_PATH}/imu`);
+    const fallStateRef = db.ref(`${DEVICE_PATH}/fallState`);
+    const eventsRef = db.ref(`${DEVICE_PATH}/events`).limitToLast(50);
+    const infoRef = db.ref(".info/connected");
+    const battRef = db.ref(`${DEVICE_PATH}/battery`);
+    const rssiRef = db.ref(`${DEVICE_PATH}/rssi`);
+    const gpsRef = db.ref(`${DEVICE_PATH}/gps`); // {lat, lon}
+
+    // ===== UI Elements =====
+    const accelEls = { ax: document.getElementById('accelXValue'), ay: document.getElementById('accelYValue'), az: document.getElementById('accelZValue') };
+    const fallStatusText = document.getElementById('fallStatusText');
+    const fallIcon = document.getElementById('fallIcon');
+    const lastUpdatedEl = document.getElementById('lastUpdated');
+    const amp10xEl = document.getElementById('amp10x');
+    const gVecEl = document.getElementById('gVec');
+    const connBadge = document.getElementById('connBadge');
+    const overlay = document.getElementById('fallOverlay');
+    const ackBtn = document.getElementById('ackBtn');
+    const muteBtn = document.getElementById('muteBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const downloadBtn = document.getElementById('downloadCsv');
+    const batteryPctEl = document.getElementById('batteryPct');
+    const wifiRssiEl = document.getElementById('wifiRssi');
+    const sampleHzEl = document.getElementById('sampleHz');
+    const severityBadge = document.getElementById('severityBadge');
+    const highImpactEl = document.getElementById('highImpact');
+    const fallsTodayEl = document.getElementById('fallsToday');
+    const gpsReadout = document.getElementById('gpsReadout');
+
+    // ===== Sound =====
+    let soundMuted = false;
+    function beep(){ if(soundMuted) return; const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.type='sine'; o.frequency.value=880; o.connect(g); g.connect(ctx.destination); g.gain.setValueAtTime(0.001,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.3,ctx.currentTime+0.01); o.start(); setTimeout(()=>{ g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.05); o.stop(ctx.currentTime+0.06); },140); }
+    muteBtn.addEventListener('click', ()=>{ soundMuted=!soundMuted; muteBtn.textContent = soundMuted? 'Unmute' : 'Mute sound'; });
+    ackBtn.addEventListener('click', ()=> overlay.style.display='none');
+
+    // ===== Chart =====
+    const MAX_POINTS = 50; document.getElementById('windowSize').textContent = MAX_POINTS;
+    let paused = false; pauseBtn.addEventListener('click', ()=>{ paused=!paused; pauseBtn.textContent = paused? '▶️':'⏸️'; });
+    const ctxAccel = document.getElementById('accelChart').getContext('2d');
+    const accelChart = new Chart(ctxAccel, { type:'line', data:{ labels:[], datasets:[{label:'ax',data:[],borderWidth:2,fill:false},{label:'ay',data:[],borderWidth:2,fill:false},{label:'az',data:[],borderWidth:2,fill:false}] }, options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'}, animation:{duration:0}, plugins:{legend:{position:'top'}}, scales:{ y:{ suggestedMin:-3, suggestedMax:3, title:{display:true,text:'m/s² (norm)'} } } } });
+    resetBtn.addEventListener('click',()=>{ accelChart.data.labels=[]; accelChart.data.datasets.forEach(d=>d.data=[]); accelChart.update(); sessionRows.length=0; });
+
+    function pushAccel(ax,ay,az){ const t=new Date(); const label=t.toLocaleTimeString(); const ds=accelChart.data.datasets; accelChart.data.labels.push(label); ds[0].data.push(ax); ds[1].data.push(ay); ds[2].data.push(az); if(ds[0].data.length>MAX_POINTS){ accelChart.data.labels.shift(); ds.forEach(d=>d.data.shift()); } accelChart.update(); }
+
+    // ===== Risk Gauge (ApexCharts) =====
+    const gauge = new ApexCharts(document.querySelector('#riskGauge'), { chart:{ type:'radialBar', height:280, sparkline:{enabled:true} }, series:[0], labels:['Risk %'], plotOptions:{ radialBar:{ hollow:{size:'60%'}, dataLabels:{ value:{ formatter: (v)=>`${Math.round(v)}%` } } } }, colors:['#ef4444'] });
+    gauge.render();
+
+    function computeRisk(d){ // Lightweight heuristic (0-100)
+      const amp = Number(d.amp10x||0)/10; // back to g magnitude-ish
+      const gx = Number(d.gx||0), gy=Number(d.gy||0), gz=Number(d.gz||0);
+      const gvec = Math.sqrt(gx*gx+gy*gy+gz*gz);
+      const az = Math.abs(Number(d.az||0));
+      const ai = d.isFall ? 1 : 0;
+      let score = (amp*12) + (gvec*0.8) + (az*8) + (ai*25); // tuned visually
+      score = Math.max(0, Math.min(100, score));
+      return {score, gvec};
+    }
+
+    function updateSeverity(score){
+      let label='Normal', color='var(--success)';
+      if(score>70){ label='FALL (Severe)'; color='var(--danger)'; }
+      else if(score>40){ label='Warning'; color='var(--warning)'; }
+      severityBadge.className = `status-badge ${score>40? 'status-bad':'status-ok'}`;
+      severityBadge.innerHTML = `<span class="status-dot" style="background:${color}"></span>${label}`;
+    }
+
+    // ===== Orientation Estimation (integrate gyro) =====
+    let rx=0, ry=0, rz=0; let lastTs = performance.now();
+    function integrateGyro(gx,gy,gz){ const now=performance.now(); const dt=(now-lastTs)/1000; lastTs=now; rx += gx*dt; ry += gy*dt; rz += gz*dt; // crude integration
+      // damping to avoid drift explosion
+      rx*=0.995; ry*=0.995; rz*=0.995;
+      const cube = document.getElementById('cube');
+      cube.style.transform = `rotateX(${rx.toFixed(1)}deg) rotateY(${ry.toFixed(1)}deg) rotateZ(${rz.toFixed(1)}deg)`;
+      document.getElementById('anglesReadout').textContent = `rx: ${rx.toFixed(1)}°, ry: ${ry.toFixed(1)}°, rz: ${rz.toFixed(1)}°`;
+    }
+
+    // ===== Trends (session) =====
+    const ctxTrend = document.getElementById('trendChart').getContext('2d');
+    const trendChart = new Chart(ctxTrend, { type:'line', data:{ labels:[], datasets:[{label:'amp10x',data:[],borderWidth:2,fill:false},{label:'|gyro|',data:[],borderWidth:2,fill:false}] }, options:{ responsive:true, maintainAspectRatio:false, interaction:{intersect:false,mode:'index'}, animation:{duration:0} } });
+    function pushTrend(amp, gvec){ const t=new Date().toLocaleTimeString(); const ds=trendChart.data.datasets; trendChart.data.labels.push(t); ds[0].data.push(amp); ds[1].data.push(gvec); if(ds[0].data.length>100){ trendChart.data.labels.shift(); ds.forEach(d=>d.data.shift()); } trendChart.update(); }
+
+    // ===== CSV (session) =====
+    const sessionRows = []; // {ts, ax, ay, az, gx, gy, gz, amp10x, isFall}
+    downloadBtn.addEventListener('click', ()=>{
+      const header = 'timestamp,ax,ay,az,gx,gy,gz,amp10x,isFall\n';
+      const body = sessionRows.map(r => [r.ts,r.ax,r.ay,r.az,r.gx,r.gy,r.gz,r.amp10x,r.isFall].join(',')).join('\n');
+      const blob = new Blob([header + body], {type: 'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `imu_session_${new Date().toISOString().split('.')[0].replace(/:/g, '-')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // ===== Map (Leaflet) =====
+    const map = L.map('map').setView([22.3, 70.8], 5); // India default
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'© OpenStreetMap'}).addTo(map);
+    let marker = null;
+
+    // ===== Live Listeners =====
+    infoRef.on('value', snap=>{ const ok = snap.val()===true; connBadge.className=`status-badge ${ok?'status-ok':'status-bad'}`; connBadge.innerHTML=`<span class=\"status-dot\" style=\"background:${ok?'var(--success)':'var(--danger)'}\"></span>${ok?'Connected':'Disconnected'}`; });
+
+    // Stats
+    let highImpact=0; let fallsToday=0; let lastSampleAt=null; const freqWindow=[]; // ms deltas
+
+    function updateSampleHz(){ if(freqWindow.length<2){ sampleHzEl.textContent='–'; return; } const avgMs = freqWindow.reduce((a,b)=>a+b,0)/freqWindow.length; const hz = 1000/avgMs; sampleHzEl.textContent = hz.toFixed(1)+' Hz'; if(freqWindow.length>50) freqWindow.shift(); }
+
+    imuRef.on('value', snap=>{
+      const d=snap.val(); if(!d) return; const now=new Date(); lastUpdatedEl.textContent= now.toLocaleTimeString();
+      const ax=Number(d.ax||0), ay=Number(d.ay||0), az=Number(d.az||0); const gx=Number(d.gx||0), gy=Number(d.gy||0), gz=Number(d.gz||0); const amp=Number(d.amp10x||0); const isFall=!!d.isFall;
+      accelEls.ax.textContent=ax.toFixed(2); accelEls.ay.textContent=ay.toFixed(2); accelEls.az.textContent=az.toFixed(2);
+      amp10xEl.textContent=amp; const gvec=Math.sqrt(gx*gx+gy*gy+gz*gz); gVecEl.textContent=gvec.toFixed(1);
+      if(!paused) pushAccel(ax,ay,az); integrateGyro(gx,gy,gz);
+
+      // Risk + severity + trends
+      const {score} = computeRisk(d); gauge.updateSeries([score]); updateSeverity(score); pushTrend(amp, gvec);
+
+      // Session counters
+      if(amp>=12) highImpact++; highImpactEl.textContent=highImpact;
+
+      // Sampling freq
+      const tNow=performance.now(); if(lastSampleAt!==null){ freqWindow.push(tNow-lastSampleAt); updateSampleHz(); } lastSampleAt=tNow;
+
+      // AI prediction mirror
+      document.getElementById('aiPredictionLine').textContent = `AI prediction: ${isFall? 'Fall':'Not Fall'}`;
+
+      // CSV row
+      sessionRows.push({ ts: now.toISOString(), ax, ay, az, gx, gy, gz, amp10x: amp, isFall });
+    });
+
+    fallStateRef.on('value', snap=>{ const isFall=!!snap.val(); setFallUI(isFall); if(isFall){ overlay.style.display='flex'; beep(); setTimeout(()=> overlay.style.display='none', 3000); }});
+
+    eventsRef.on('child_added', snap=>{ const ev=snap.val(); renderEvent(ev); // count today
+      try{ const d=new Date(ev.timestamp_ms||Date.now()); const today=new Date(); if(d.toDateString()===today.toDateString()) { fallsToday++; fallsTodayEl.textContent = fallsToday; } }catch(e){}
+    });
+
+    battRef.on('value', snap=>{ const v=snap.val(); batteryPctEl.textContent = (v==null? '–' : (v+ '%')); });
+    rssiRef.on('value', snap=>{ const v=snap.val(); wifiRssiEl.textContent = (v==null? '–' : (v+ ' dBm')); });
+
+    gpsRef.on('value', snap=>{ const g=snap.val(); if(!g||g.lat==null||g.lon==null){ gpsReadout.textContent='Waiting for GPS…'; return; } gpsReadout.textContent = `lat: ${g.lat.toFixed(5)}, lon: ${g.lon.toFixed(5)}`; if(!marker){ marker=L.marker([g.lat,g.lon]).addTo(map); } else { marker.setLatLng([g.lat,g.lon]); } map.setView([g.lat,g.lon], 16); });
+
+    function setFallUI(isFall){ const card=document.getElementById('fallStatusCard'); if(isFall){ card.style.boxShadow='0 10px 30px rgba(239,68,68,.25)'; fallIcon.textContent='🔴'; fallStatusText.textContent='FALL DETECTED'; } else { card.style.boxShadow='var(--shadow)'; fallIcon.textContent='🟢'; fallStatusText.textContent='No Fall'; } }
+
+    function renderEvent(ev){ const wrap=document.getElementById('events'); const div=document.createElement('div'); div.className='event'; const ts=(typeof ev.timestamp_ms==='number')? new Date(ev.timestamp_ms).toLocaleTimeString() : new Date().toLocaleTimeString(); div.innerHTML=`<div class="emo">⚠️</div><div><div><strong>${ev?.message||'Fall event'}</strong></div><div class="meta">${ev?.type||'fall_detected'} • ${ts}</div></div>`; wrap.appendChild(div); wrap.scrollTop=wrap.scrollHeight; }
+  </script>
+</body>
+</html>

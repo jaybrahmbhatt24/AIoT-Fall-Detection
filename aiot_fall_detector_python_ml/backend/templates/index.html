@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIoT Fall Detector • ESP32 + MPU6050</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+  <style>
+    :root { --primary:#4361ee; --primary-ghost:#eef2ff; --danger:#ef4444; --success:#10b981; --warning:#f59e0b; --ink:#111827; --muted:#6b7280; --card:#fff; --bg:#f3f4f6; --shadow:0 10px 20px rgba(0,0,0,.06); --radius:14px; }
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;padding:24px}
+    .container{max-width:1320px;margin:0 auto}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .title-wrap{display:flex;align-items:center;gap:10px}
+    .pill{font-size:12px;padding:6px 10px;border-radius:999px;background:var(--primary-ghost);color:var(--primary);font-weight:600}
+    .header h1{font-size:22px;margin:0}
+    .toolbar{display:flex;gap:8px}
+    button{border:none;background:var(--primary-ghost);color:var(--primary);border-radius:10px;padding:8px 12px;cursor:pointer;font-weight:500;font-size:14px}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+    .metric{grid-column:span 3;display:flex;gap:12px;align-items:center}
+    .metric .icon{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--primary-ghost);color:var(--primary);font-size:20px}
+    .metric .label{font-size:13px;color:var(--muted);margin-bottom:4px}
+    .metric .value{font-size:22px;font-weight:800;line-height:1.2}
+    .chart-card{grid-column:span 8;height:380px;position:relative}
+    .side-card{grid-column:span 4}
+    .section-title{font-weight:600;font-size:14px;margin-bottom:12px;color:var(--ink)}
+    .status-badge{display:inline-flex;align-items:center;gap:6px;font-weight:500;padding:6px 12px;border-radius:999px;font-size:13px}
+    .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+    .status-ok{background:rgba(16,185,129,.15);color:var(--success)}
+    .status-bad{background:rgba(239,68,68,.15);color:var(--danger)}
+    .muted{color:var(--muted);font-size:12px}
+    .kv{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9}
+    .kv:last-child{border-bottom:none}
+    .events{max-height:240px;overflow:auto}
+    .event{display:flex;gap:12px;padding:10px 0;border-bottom:1px dashed #e9edf3}
+    .event:last-child{border-bottom:none}
+    .footer-row{grid-column:span 12;display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+    .tiny{font-size:12px;color:var(--muted)}
+    
+    @media (max-width:1100px){
+      .metric{grid-column:span 6}
+      .chart-card,.side-card{grid-column:span 12}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title-wrap">
+        <span class="pill">ESP32 • Firebase RTDB</span>
+        <h1>AIoT Fall Detector Dashboard</h1>
+      </div>
+      <div class="toolbar">
+        <button id="simulate">Simulate Sample</button>
+        <button id="download">Download CSV</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Top Metrics -->
+      <div class="card metric">
+        <div class="icon">↔️</div>
+        <div>
+          <div class="label">Acceleration X</div>
+          <div class="value" id="ax">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric">
+        <div class="icon">↕️</div>
+        <div>
+          <div class="label">Acceleration Y</div>
+          <div class="value" id="ay">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric">
+        <div class="icon">⬆️</div>
+        <div>
+          <div class="label">Acceleration Z</div>
+          <div class="value" id="az">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric" id="fallStatusCard">
+        <div class="icon" id="fallIcon">🟢</div>
+        <div>
+          <div class="label">Fall Status</div>
+          <div class="value" id="status">No Fall</div>
+          <div class="muted" id="aiPrediction">AI prediction: Not Fall</div>
+        </div>
+      </div>
+
+      <!-- Chart + Side Panel -->
+      <div class="card chart-card">
+        <div class="section-title">MPU6050 Real-time Acceleration</div>
+        <canvas id="chart" style="width:100%; height:calc(100% - 30px)"></canvas>
+      </div>
+
+      <div class="card side-card">
+        <div class="section-title">Device Status</div>
+        <div class="kv">
+          <span class="muted">Connection</span>
+          <span id="connBadge" class="status-badge status-ok">
+            <span class="status-dot" style="background:var(--success)"></span>
+            Connected
+          </span>
+        </div>
+        <div class="kv"><span class="muted">Node</span><code>/devices/esp32_1</code></div>
+        <div class="kv"><span class="muted">Last update</span><span id="lastUpdated">–</span></div>
+        <div class="kv"><span class="muted">amp10x</span><span id="amp10x">–</span></div>
+        <div class="kv"><span class="muted">|gyro| (°/s)</span><span id="gVec">–</span></div>
+        
+        <div class="section-title" style="margin-top: 16px;">Fall Prediction</div>
+        <div class="kv">
+          <span class="muted">Status</span>
+          <span id="pred" class="status-badge status-ok">
+            <span class="status-dot" style="background:var(--success)"></span>
+            Not Fall
+          </span>
+        </div>
+        <div class="kv">
+          <span class="muted">Probability</span>
+          <span id="prob" class="value" style="font-size: 18px;">0.00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+  // Firebase configuration (update with your actual config from Firebase Console)
+  const firebaseConfig = {
+    apiKey: "AIzaSyDlXqZRjJvQvJ4X4X4X4X4X4X4X4X4X4X4X4",
+    authDomain: "mpu6050-data-24546.firebaseapp.com",
+    databaseURL: "https://mpu6050-data-24546-default-rtdb.firebaseio.com",
+    projectId: "mpu6050-data-24546",
+    storageBucket: "mpu6050-data-24546.appspot.com",
+    messagingSenderId: "123456789012",
+    appId: "1:123456789012:web:abcdef123456"
+  };
+  
+  // Note: For production, move these to environment variables or server-side code
+
+  // Initialize Firebase
+  firebase.initializeApp(firebaseConfig);
+  const database = firebase.database();
+
+  // DOM Elements
+  const axEl = document.getElementById('ax');
+  const ayEl = document.getElementById('ay');
+  const azEl = document.getElementById('az');
+  const statusEl = document.getElementById('status');
+  const predEl = document.getElementById('pred');
+  const probEl = document.getElementById('prob');
+  const lastUpdatedEl = document.getElementById('lastUpdated');
+  const amp10xEl = document.getElementById('amp10x');
+  const gVecEl = document.getElementById('gVec');
+  const fallIcon = document.getElementById('fallIcon');
+  const fallCard = document.getElementById('fallStatusCard');
+  const connBadge = document.getElementById('connBadge');
+  const aiPredictionEl = document.getElementById('aiPrediction');
+
+  // Listen for changes in the Firebase database
+  const devicePath = "/devices/esp32_1";
+  const imuRef = database.ref(devicePath + "/imu");
+  const aiRef = database.ref(devicePath + "/ai");
+  
+  // Track last update time
+  let lastUpdate = Date.now();
+  
+  // Chart setup
+  const ctx = document.getElementById('chart').getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'amp10x',
+          data: [],
+          borderColor: '#4361ee',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.1
+        },
+        {
+          label: '|gyro|',
+          data: [],
+          borderColor: '#10b981',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.1
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 0 },
+      interaction: { intersect: false, mode: 'index' },
+      scales: {
+        x: { display: true, grid: { display: false } },
+        y: { display: true, grid: { color: 'rgba(0,0,0,0.05)' } }
+      },
+      plugins: {
+        legend: { display: true, position: 'top' },
+        tooltip: { mode: 'index', intersect: false }
+      }
+    }
+  });
+
+  // Update chart with new data
+  function pushChart(amp, gvec) {
+    const t = new Date().toLocaleTimeString();
+    chart.data.labels.push(t);
+    chart.data.datasets[0].data.push(amp);
+    chart.data.datasets[1].data.push(gvec);
+    
+    // Keep a reasonable number of data points
+    const maxPoints = 50;
+    if (chart.data.labels.length > maxPoints) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+      chart.data.datasets[1].data.shift();
+    }
+    
+    chart.update('none'); // 'none' prevents animation for better performance
+  }
+  
+  // Make prediction request to the server
+  async function predict(sample) {
+    try {
+      const response = await fetch('/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sample)
+      });
+      const result = await response.json();
+      updateUI(result.is_fall, result.prob_fall);
+    } catch (e) {
+      console.error('Prediction error:', e);
+    }
+  }
+  
+  // Update the UI with new data
+  function updateUI(isFall, prob) {
+    // Update prediction and probability
+    probEl.textContent = prob.toFixed(4);
+    
+    if (isFall) {
+      predEl.innerHTML = '<span class="status-dot" style="background:var(--danger)"></span> Fall Detected!';
+      predEl.className = 'status-badge status-bad';
+      statusEl.textContent = 'FALL DETECTED';
+      fallIcon.textContent = '⚠️';
+      fallCard.style.background = 'rgba(239, 68, 68, 0.05)';
+      aiPredictionEl.textContent = 'AI prediction: Fall detected!';
+      aiPredictionEl.style.color = 'var(--danger)';
+      
+      // Flash the status card
+      fallCard.style.transition = 'background-color 0.5s';
+      setTimeout(() => {
+        fallCard.style.background = 'rgba(239, 68, 68, 0.1)';
+      }, 100);
+    } else {
+      predEl.innerHTML = '<span class="status-dot" style="background:var(--success)"></span> No Fall';
+      predEl.className = 'status-badge status-ok';
+      statusEl.textContent = 'No Fall';
+      fallIcon.textContent = '✓';
+      fallCard.style.background = '';
+      aiPredictionEl.textContent = 'AI prediction: No fall';
+      aiPredictionEl.style.color = 'var(--muted)';
+    }
+  }
+
+  // Listen for IMU data changes
+  imuRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+    
+    // Update last updated time
+    lastUpdate = Date.now();
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+    
+    // Update sensor values
+    if (data.ax !== undefined) axEl.textContent = parseFloat(data.ax).toFixed(2);
+    if (data.ay !== undefined) ayEl.textContent = parseFloat(data.ay).toFixed(2);
+    if (data.az !== undefined) azEl.textContent = parseFloat(data.az).toFixed(2);
+    
+    // Calculate and update derived metrics
+    const ax = parseFloat(data.ax || 0);
+    const ay = parseFloat(data.ay || 0);
+    const az = parseFloat(data.az || 0);
+    const gx = parseFloat(data.gx || 0);
+    const gy = parseFloat(data.gy || 0);
+    const gz = parseFloat(data.gz || 0);
+    
+    const amp10x = Math.sqrt(ax*ax + ay*ay + az*az) * 10.0;
+    const gvec = Math.sqrt(gx*gx + gy*gy + gz*gz);
+    
+    amp10xEl.textContent = amp10x.toFixed(2);
+    gVecEl.textContent = gvec.toFixed(2);
+    
+    // Update chart
+    pushChart(amp10x, gvec);
+  });
+  
+  // Listen for AI prediction updates
+  aiRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+    
+    const isFall = data.prediction === 1;
+    const prob = parseFloat(data.prob_fall || 0);
+    
+    // Update UI with prediction
+    updateUI(isFall, prob);
+    
+    // Update last updated time
+    lastUpdate = Date.now();
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+  });
+  
+  // Check connection status
+  database.ref('.info/connected').on('value', (snapshot) => {
+    if (snapshot.val() === true) {
+      connBadge.innerHTML = '<span class="status-dot" style="background:var(--success)"></span> Connected';
+      connBadge.className = 'status-badge status-ok';
+    } else {
+      connBadge.innerHTML = '<span class="status-dot" style="background:var(--danger)"></span> Disconnected';
+      connBadge.className = 'status-badge status-bad';
+    }
+  });
+
+  // Listen for IMU data updates
+  imuRef.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) return;
+    
+    // Update last updated timestamp
+    lastUpdatedEl.textContent = new Date().toLocaleTimeString();
+    
+    // Update sensor values
+    axEl.textContent = data.ax ? Number(data.ax).toFixed(2) : '0.00';
+    ayEl.textContent = data.ay ? Number(data.ay).toFixed(2) : '0.00';
+    azEl.textContent = data.az ? Number(data.az).toFixed(2) : '0.00';
+    
+    // Calculate and update derived values
+    const gvec = Math.sqrt(
+      Math.pow(data.gx || 0, 2) + 
+      Math.pow(data.gy || 0, 2) + 
+      Math.pow(data.gz || 0, 2)
+    );
+    
+    const amp10x = data.amp10x || 
+      Math.sqrt(
+        Math.pow(data.ax || 0, 2) + 
+        Math.pow(data.ay || 0, 2) + 
+        Math.pow(data.az || 0, 2)
+      ) * 10.0;
+    
+    amp10xEl.textContent = amp10x.toFixed(2);
+    gVecEl.textContent = gvec.toFixed(2);
+    
+  // Simulate button click handler
+  document.getElementById('simulate').addEventListener('click', () => {
+    // This would trigger a simulation in your backend or directly in Firebase
+    alert('Simulation would be triggered here. In a real implementation, this would send a command to your ESP32 or update Firebase with test data.');
+  });
+  
+  // Download button click handler
+  document.getElementById('download').addEventListener('click', () => {
+    // This would trigger a CSV download of the collected data
+    alert('CSV download would be implemented here. You would typically fetch the data from Firebase and format it as CSV.');
+  });
+  
+  // Check for connection issues
+  setInterval(() => {
+    const timeSinceUpdate = Date.now() - lastUpdate;
+    if (timeSinceUpdate > 10000) { // 10 seconds without updates
+      connBadge.innerHTML = '<span class="status-dot" style="background:var(--danger)"></span> No recent data';
+    }
+  }, 5000);
+
+  // Calculate gyroscope vector magnitude
+  const gyroMagnitude = Math.sqrt(
+    Math.pow(sample.gx, 2) +
+    Math.pow(sample.gy, 2) + 
+    Math.pow(sample.gz, 2)
+  );
+  const sampleGvec = gyroMagnitude;
+  
+  // Update UI with simulated data
+    document.getElementById('ax').textContent = sample.ax;
+    document.getElementById('ay').textContent = sample.ay;
+    document.getElementById('az').textContent = sample.az;
+    document.getElementById('amp10x').textContent = sampleAmp10x.toFixed(2);
+    document.getElementById('gVec').textContent = sampleGvec.toFixed(2);
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+    
+    // Update chart and make prediction
+    pushChart(sampleAmp10x, sampleGvec);
+    predict(sample);
+  });
+
+  // Download CSV button
+  document.getElementById('download').addEventListener('click', () => {
+    // Get all the data from the chart
+    const labels = chart.data.labels;
+    const amp10xData = chart.data.datasets[0].data;
+    const gvecData = chart.data.datasets[1].data;
+    
+    // Create CSV content
+    let csvContent = 'Timestamp,Accel X,Accel Y,Accel Z,amp10x,|gyro|\n';
+    
+    // Add data rows
+    for (let i = 0; i < labels.length; i++) {
+      const row = [
+        `"${labels[i]}"`,
+        document.getElementById('ax').textContent,
+        document.getElementById('ay').textContent,
+        document.getElementById('az').textContent,
+        amp10xData[i].toFixed(2),
+        gvecData[i].toFixed(2)
+      ];
+      csvContent += row.join(',') + '\n';
+    }
+    
+    // Create download link
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `fall-detection-${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  });
+</script>
+</body>
+</html>

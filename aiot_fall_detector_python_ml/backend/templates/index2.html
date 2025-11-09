@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AIoT Fall Detector • ESP32 + MPU6050</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+  <style>
+    :root { --primary:#4361ee; --primary-ghost:#eef2ff; --danger:#ef4444; --success:#10b981; --warning:#f59e0b; --ink:#111827; --muted:#6b7280; --card:#fff; --bg:#f3f4f6; --shadow:0 10px 20px rgba(0,0,0,.06); --radius:14px; }
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);margin:0;padding:24px}
+    .container{max-width:1320px;margin:0 auto}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .title-wrap{display:flex;align-items:center;gap:10px}
+    .pill{font-size:12px;padding:6px 10px;border-radius:999px;background:var(--primary-ghost);color:var(--primary);font-weight:600}
+    .header h1{font-size:22px;margin:0}
+    .toolbar{display:flex;gap:8px}
+    button.icon{border:none;background:#f1f5ff;color:#3b5bff;border-radius:10px;padding:8px 10px;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+    .metric{grid-column:span 3;display:flex;gap:12px;align-items:center}
+    .metric .icon{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--primary-ghost);color:var(--primary);font-size:20px}
+    .metric .label{font-size:12px;color:var(--muted)}
+    .metric .value{font-size:22px;font-weight:800}
+    .chart-card{grid-column:span 8;height:380px}
+    .chart-wrap{position:relative;height:300px}
+    .side-card{grid-column:span 4}
+    .section-title{font-weight:700;font-size:14px;margin-bottom:8px}
+    .status-badge{display:inline-flex;align-items:center;gap:8px;font-weight:600;padding:8px 12px;border-radius:999px}
+    .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+    .status-ok{background:rgba(16,185,129,.15);color:var(--success)}
+    .status-bad{background:rgba(239,68,68,.15);color:var(--danger)}
+    .muted{color:var(--muted);font-size:12px}
+    .kv{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eceff3}
+    .kv:last-child{border-bottom:none}
+    .events{max-height:240px;overflow:auto}
+    .event{display:flex;gap:12px;padding:10px 0;border-bottom:1px dashed #e9edf3}
+    .event:last-child{border-bottom:none}
+    .event .emo{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:#fff1f2;color:#be123c}
+    .event .meta{font-size:12px;color:var(--muted)}
+    .footer-row{grid-column:span 12;display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+    .tiny{font-size:12px;color:var(--muted)}
+    .row-2{grid-column:span 12;display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+    .half{grid-column:span 6}
+    .map{height:300px;border-radius:12px;overflow:hidden}
+    .gauge-card{grid-column:span 4}
+    .orientation-card{grid-column:span 4}
+    .alerts-card{grid-column:span 4}
+
+    /* Orientation cube */
+    .cube-wrap{height:260px;display:grid;place-items:center;background:#f8fafc;border-radius:12px;border:1px solid #e5e7eb}
+    .cube{width:100px;height:100px;position:relative;transform-style:preserve-3d;transform:rotateX(0deg) rotateY(0deg) rotateZ(0deg);transition:transform .08s linear}
+    .face{position:absolute;width:100px;height:100px;background:rgba(67,97,238,.12);border:1px solid #c7d2fe;display:grid;place-items:center;font-weight:700;color:#3b82f6}
+    .front{transform:translateZ(50px)}
+    .back{transform:rotateY(180deg) translateZ(50px)}
+    .right{transform:rotateY(90deg) translateZ(50px)}
+    .left{transform:rotateY(-90deg) translateZ(50px)}
+    .top{transform:rotateX(90deg) translateZ(50px)}
+    .bottom{transform:rotateX(-90deg) translateZ(50px)}
+
+    /* POPUP */
+    .overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);z-index:50}
+    .popup{width:min(560px,92vw);background:#fff;border-radius:18px;box-shadow:0 25px 60px rgba(0,0,0,.25);padding:22px;text-align:center}
+    .popup h2{margin:10px 0 4px;font-size:22px}
+    .pulse{width:72px;height:72px;border-radius:50%;background:#fee2e2;display:grid;place-items:center;margin:0 auto;animation:pulse 1.2s infinite}
+    .pulse span{font-size:34px;color:#b91c1c}
+    .actions{margin-top:14px;display:flex;gap:10px;justify-content:center}
+    .btn{border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn-primary{background:var(--danger);color:#fff}
+    .btn-ghost{background:#f3f4f6}
+    @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
+
+    @media (max-width:1100px){.metric{grid-column:span 6}.chart-card,.side-card,.half,.gauge-card,.orientation-card,.alerts-card{grid-column:span 12}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title-wrap">
+        <span class="pill">ESP32 · Firebase RTDB</span>
+        <h1>AIoT Fall Detector Dashboard</h1>
+      </div>
+      <div class="toolbar">
+        <button class="icon" id="pauseBtn" title="Pause/Resume">⏸️</button>
+        <button class="icon" id="resetBtn" title="Reset Chart">🔄</button>
+        <button class="icon" id="downloadCsv" title="Download CSV">⬇️ CSV</button>
+      </div>
+    </div>
+
+    <!-- Top metrics -->
+    <div class="grid">
+      <div class="card metric">
+        <div class="icon">↔️</div>
+        <div>
+          <div class="label">Acceleration X</div>
+          <div class="value" id="accelXValue">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric">
+        <div class="icon">↕️</div>
+        <div>
+          <div class="label">Acceleration Y</div>
+          <div class="value" id="accelYValue">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric">
+        <div class="icon">⬆️</div>
+        <div>
+          <div class="label">Acceleration Z</div>
+          <div class="value" id="accelZValue">0.00</div>
+          <div class="muted">m/s²</div>
+        </div>
+      </div>
+      <div class="card metric" id="fallStatusCard">
+        <div class="icon" id="fallIcon">🟢</div>
+        <div>
+          <div class="label">Fall Status</div>
+          <div class="value" id="fallStatusText">No Fall</div>
+          <div class="muted" id="aiPredictionLine">AI prediction: Not Fall</div>
+        </div>
+      </div>
+
+      <!-- Chart + Device / Events -->
+      <div class="card chart-card">
+        <div class="section-title">MPU6050 Real‑time Acceleration</div>
+        <div class="chart-wrap">
+          <canvas id="accelChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card side-card">
+        <div class="section-title">Device</div>
+        <div class="kv">
+          <span class="muted">Firebase</span>
+          <span id="connBadge" class="status-badge status-ok">
+            <span class="status-dot" style="background:var(--success)"></span>Connected
+          </span>
+        </div>
+        <div class="kv"><span class="muted">Node</span><code>/devices/esp32_1</code></div>
+        <div class="kv"><span class="muted">Last update</span><span id="lastUpdated">–</span></div>
+        <div class="kv"><span class="muted">amp10x</span><span id="amp10x">–</span></div>
+        <div class="kv"><span class="muted">|gyro| (°/s)</span><span id="gVec">–</span></div>
+        <div class="kv"><span class="muted">Battery</span><span id="batteryPct">–</span></div>
+        <div class="kv"><span class="muted">WiFi RSSI</span><span id="wifiRssi">–</span></div>
+        <div class="kv"><span class="muted">Sampling</span><span id="sampleHz">–</span></div>
+
+        <div class="section-title" style="margin-top:14px;">Recent Fall Events</div>
+        <div class="events" id="events"></div>
+      </div>
+
+      <!-- Row: Risk Gauge • Orientation • Alerts -->
+      <div class="card gauge-card">
+        <div class="section-title">AI Fall Risk</div>
+        <div id="riskGauge"></div>
+      </div>
+      <div class="card orientation-card">
+        <div class="section-title">Body Orientation (est.)</div>
+        <div class="cube-wrap">
+          <div class="cube" id="cube">
+            <div class="face front">F</div>
+            <div class="face back">B</div>
+            <div class="face right">R</div>
+            <div class="face left">L</div>
+            <div class="face top">T</div>
+            <div class="face bottom">D</div>
+          </div>
+        </div>
+        <div class="muted" id="anglesReadout">rx: 0°, ry: 0°, rz: 0°</div>
+      </div>
+      <div class="card alerts-card">
+        <div class="section-title">Alerts (Severity)</div>
+        <div class="kv">
+          <span class="muted">Status</span>
+          <span id="severityBadge" class="status-badge status-ok">
+            <span class="status-dot" style="background:var(--success)"></span> Normal
+          </span>
+        </div>
+        <div class="kv"><span class="muted">High Impact</span><span id="highImpact">0</span></div>
+        <div class="kv"><span class="muted">Falls (Today)</span><span id="fallsToday">0</span></div>
+      </div>
+
+      <!-- Row: Trends & Map -->
+      <div class="row-2">
+        <div class="card half">
+          <div class="section-title">Trends (Session)</div>
+          <div class="chart-wrap">
+            <canvas id="trendChart"></canvas>
+          </div>
+        </div>
+        <div class="card half">
+          <div class="section-title">Location</div>
+          <div id="map" class="map"></div>
+          <div class="muted" id="gpsReadout">Waiting for GPS…</div>
+        </div>
+      </div>
+
+      <div class="footer-row">
+        <div class="tiny">Chart window: last <span id="windowSize">50</span> samples • CSV contains all session samples</div>
+        <div class="tiny">ESP32 sends: ax, ay, az, gx, gy, gz, amp10x, <b>isFall</b>, timestamp_ms • <code>fallState</code> mirrors status</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FALL POPUP -->
+  <div class="overlay" id="fallOverlay" role="dialog" aria-modal="true">
+    <div class="popup">
+      <div class="pulse"><span>⚠️</span></div>
+      <h2>Fall Detected!</h2>
+      <p class="muted">Received a fall event from <code>/devices/esp32_1</code>.</p>
+      <div class="actions">
+        <button class="btn btn-primary" id="ackBtn">Acknowledge</button>
+        <button class="btn btn-ghost" id="muteBtn">Mute sound</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="alertSound"></audio>
+
+  <script>
+    // ===== Firebase Config =====
+    const firebaseConfig = {
+      apiKey: "AIzaSyDlXqZRjJvQvJ4X4X4X4X4X4X4X4X4X4X4X4",
+      authDomain: "mpu6050-data-24546.firebaseapp.com",
+      databaseURL: "https://mpu6050-data-24546-default-rtdb.firebaseio.com",
+      projectId: "mpu6050-data-24546",
+      storageBucket: "mpu6050-data-24546.appspot.com",
+      messagingSenderId: "123456789012",
+      appId: "1:123456789012:web:abcdef123456"
+    };
+    
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // ===== Refs =====
+    const DEVICE_PATH = "/devices/esp32_1";
+    const imuRef = database.ref(`${DEVICE_PATH}/imu`);
+    const fallStateRef = database.ref(`${DEVICE_PATH}/fallState`);
+    
+    // DOM Elements
+    const accelXEl = document.getElementById('accelXValue');
+    const accelYEl = document.getElementById('accelYValue');
+    const accelZEl = document.getElementById('accelZValue');
+    const fallStatusEl = document.getElementById('fallStatusText');
+    const fallIcon = document.getElementById('fallIcon');
+    const fallCard = document.getElementById('fallStatusCard');
+    const aiPredictionEl = document.getElementById('aiPredictionLine');
+    const connBadge = document.getElementById('connBadge');
+    const lastUpdatedEl = document.getElementById('lastUpdated');
+    const amp10xEl = document.getElementById('amp10x');
+    const gVecEl = document.getElementById('gVec');
+    const batteryEl = document.getElementById('batteryPct');
+    const wifiRssiEl = document.getElementById('wifiRssi');
+    const sampleHzEl = document.getElementById('sampleHz');
+    const eventsEl = document.getElementById('events');
+    const highImpactEl = document.getElementById('highImpact');
+    const fallsTodayEl = document.getElementById('fallsToday');
+    const severityBadge = document.getElementById('severityBadge');
+    const anglesReadout = document.getElementById('anglesReadout');
+    const gpsReadout = document.getElementById('gpsReadout');
+    const fallOverlay = document.getElementById('fallOverlay');
+    const ackBtn = document.getElementById('ackBtn');
+    const muteBtn = document.getElementById('muteBtn');
+    const alertSound = document.getElementById('alertSound');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const downloadCsvBtn = document.getElementById('downloadCsv');
+
+    // State
+    let lastUpdate = Date.now();
+    let lastSampleTime = 0;
+    let sampleCount = 0;
+    let soundMuted = false;
+    let isPaused = false;
+    let highImpactCount = 0;
+    let fallsTodayCount = 0;
+    let rx = 0, ry = 0, rz = 0;
+    let lastGyroTime = performance.now();
+
+    // ===== Charts =====
+    // Real-time Chart
+    const MAX_POINTS = 50;
+    document.getElementById('windowSize').textContent = MAX_POINTS;
+    
+    const ctx = document.getElementById('accelChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: Array(MAX_POINTS).fill(''),
+        datasets: [
+          {
+            label: 'amp10x',
+            data: [],
+            borderColor: '#4361ee',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1
+          },
+          {
+            label: '|gyro|',
+            data: [],
+            borderColor: '#10b981',
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: {
+          duration: 0
+        },
+        scales: {
+          x: {
+            display: false
+          },
+          y: {
+            beginAtZero: true
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false
+          }
+        }
+      }
+    });
+
+    // Risk Gauge
+    const gauge = new ApexCharts(document.querySelector("#riskGauge"), {
+      series: [0],
+      chart: { type: 'radialBar', height: 280 },
+      plotOptions: {
+        radialBar: {
+          startAngle: -135,
+          endAngle: 135,
+          hollow: { margin: 0, size: '70%' },
+          dataLabels: {
+            name: { fontSize: '16px', color: '#6b7280', offsetY: 70 },
+            value: {
+              offsetY: 0,
+              fontSize: '32px',
+              color: '#111827',
+              formatter: function(val) {
+                return val + '%';
+              }
+            }
+          },
+          track: { background: '#e5e7eb', strokeWidth: '97%' }
+        }
+      },
+      fill: { type: 'gradient', gradient: { shade: 'dark', shadeIntensity: 0.15, inverseColors: false, opacityFrom: 1, opacityTo: 1, stops: [0, 50, 65, 91] } },
+      stroke: { dashArray: 4 },
+      labels: ['Fall Risk Score'],
+      colors: ['#10b981']
+    });
+    gauge.render();
+
+    // ===== Event Handlers =====
+    function updateSampleHz() {
+      const now = Date.now();
+      const elapsed = (now - lastSampleTime) / 1000; // in seconds
+      if (elapsed > 0) {
+        const hz = Math.round((sampleCount / elapsed) * 10) / 10;
+        sampleHzEl.textContent = `${hz} Hz`;
+      }
+    }
+
+    function updateOrientation(gx, gy, gz) {
+      const now = performance.now();
+      const dt = (now - lastGyroTime) / 1000; // in seconds
+      lastGyroTime = now;
+      
+      // Simple integration of gyro data (in reality, you'd want to use a sensor fusion algorithm)
+      rx += gx * dt;
+      ry += gy * dt;
+      rz += gz * dt;
+      
+      // Update 3D cube orientation
+      document.getElementById('cube').style.transform = `rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${rz}deg)`;
+      anglesReadout.textContent = `rx: ${rx.toFixed(0)}°, ry: ${ry.toFixed(0)}°, rz: ${rz.toFixed(0)}°`;
+    }
+
+    function addEvent(type, value) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString();
+      const eventEl = document.createElement('div');
+      eventEl.className = 'event';
+      eventEl.innerHTML = `
+        <div class="emo">${type === 'fall' ? '⚠️' : 'ℹ️'}</div>
+        <div style="flex:1">
+          <div>${type === 'fall' ? 'Fall Detected' : 'High Impact'}</div>
+          <div class="meta">${timeStr} • ${value}</div>
+        </div>
+      `;
+      eventsEl.insertBefore(eventEl, eventsEl.firstChild);
+      if (eventsEl.children.length > 5) {
+        eventsEl.removeChild(eventsEl.lastChild);
+      }
+    }
+
+    function showFallAlert() {
+      fallOverlay.style.display = 'flex';
+      if (!soundMuted) {
+        alertSound.src = 'https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3';
+        alertSound.loop = true;
+        alertSound.play().catch(e => console.log('Audio play failed:', e));
+      }
+      fallsTodayCount++;
+      fallsTodayEl.textContent = fallsTodayCount;
+      addEvent('fall', 'Fall detected!');
+    }
+
+    function updateSeverity(score) {
+      if (score > 70) {
+        severityBadge.className = 'status-badge status-bad';
+        severityBadge.innerHTML = '<span class="status-dot" style="background:var(--danger)"></span> High Risk';
+      } else if (score > 30) {
+        severityBadge.className = 'status-badge';
+        severityBadge.innerHTML = '<span class="status-dot" style="background:var(--warning)"></span> Medium Risk';
+      } else {
+        severityBadge.className = 'status-badge status-ok';
+        severityBadge.innerHTML = '<span class="status-dot" style="background:var(--success)"></span> Normal';
+      }
+    }
+
+    // ===== Firebase Listeners =====
+    imuRef.on('value', (snapshot) => {
+      if (isPaused) return;
+      
+      const data = snapshot.val();
+      if (!data) return;
+      
+      const now = new Date();
+      lastUpdate = now.getTime();
+      lastUpdatedEl.textContent = now.toLocaleTimeString();
+      
+      // Update sample rate calculation
+      sampleCount++;
+      if (sampleCount % 10 === 0) {
+        updateSampleHz();
+      }
+      
+      // Update UI with sensor data
+      const ax = parseFloat(data.ax || 0);
+      const ay = parseFloat(data.ay || 0);
+      const az = parseFloat(data.az || 0);
+      const gx = parseFloat(data.gx || 0);
+      const gy = parseFloat(data.gy || 0);
+      const gz = parseFloat(data.gz || 0);
+      const amp10x = parseFloat(data.amp10x || 0);
+      const gvec = Math.sqrt(gx * gx + gy * gy + gz * gz);
+      
+      accelXEl.textContent = ax.toFixed(2);
+      accelYEl.textContent = ay.toFixed(2);
+      accelZEl.textContent = az.toFixed(2);
+      amp10xEl.textContent = amp10x.toFixed(2);
+      gVecEl.textContent = gvec.toFixed(2);
+      
+      // Update charts
+      updateChart(amp10x, gvec);
+      
+      // Update orientation cube
+      updateOrientation(gx, gy, gz);
+      
+      // Check for high impact
+      if (amp10x > 25) {
+        highImpactCount++;
+        highImpactEl.textContent = highImpactCount;
+        addEvent('impact', `High impact: ${amp10x.toFixed(1)}`);
+      }
+      
+      // Update risk gauge
+      const riskScore = Math.min(100, Math.max(0, (amp10x / 30) * 100));
+      gauge.updateSeries([riskScore]);
+      updateSeverity(riskScore);
+    });
+    
+    fallStateRef.on('value', (snapshot) => {
+      const state = snapshot.val();
+      if (state && state.isFall) {
+        fallStatusEl.textContent = 'FALL DETECTED!';
+        fallIcon.textContent = '🔴';
+        fallCard.style.background = 'rgba(239, 68, 68, 0.1)';
+        showFallAlert();
+      } else {
+        fallStatusEl.textContent = 'No Fall';
+        fallIcon.textContent = '🟢';
+        fallCard.style.background = '';
+      }
+    });
+
+    // ===== UI Event Listeners =====
+    ackBtn.addEventListener('click', () => {
+      fallOverlay.style.display = 'none';
+      alertSound.pause();
+    });
+    
+    muteBtn.addEventListener('click', () => {
+      soundMuted = !soundMuted;
+      muteBtn.textContent = soundMuted ? 'Unmute' : 'Mute sound';
+      if (soundMuted) {
+        alertSound.pause();
+      } else if (fallOverlay.style.display === 'flex') {
+        alertSound.play().catch(e => console.log('Audio play failed:', e));
+      }
+    });
+    
+    pauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused;
+      pauseBtn.textContent = isPaused ? '▶️' : '⏸️';
+    });
+    
+    resetBtn.addEventListener('click', () => {
+      // Reset chart data
+      chart.data.datasets[0].data = [];
+      chart.data.datasets[1].data = [];
+      chart.update('none');
+      
+      // Reset sample counter
+      sampleCount = 0;
+      lastSampleTime = Date.now();
+      sampleHzEl.textContent = '0 Hz';
+    });
+    
+    downloadCsvBtn.addEventListener('click', () => {
+      // Get all the data from the chart
+      const labels = chart.data.labels;
+      const amp10xData = chart.data.datasets[0].data;
+      const gvecData = chart.data.datasets[1].data;
+      
+      // Create CSV content
+      let csvContent = 'Timestamp,Accel X,Accel Y,Accel Z,amp10x,|gyro|\n';
+      
+      // Add data rows
+      for (let i = 0; i < labels.length; i++) {
+        const row = [
+          `"${labels[i]}"`,
+          accelXEl.textContent,
+          accelYEl.textContent,
+          accelZEl.textContent,
+          amp10xData[i]?.toFixed(2) || '0.00',
+          gvecData[i]?.toFixed(2) || '0.00'
+        ];
+        csvContent += row.join(',') + '\n';
+      }
+      
+      // Create download link
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `fall_detector_${new Date().toISOString().slice(0,10)}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    // Initialize map
+    const map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    
+    // Add a marker
+    const marker = L.marker([0, 0]).addTo(map);
+    marker.bindPopup("Device Location").openPopup();
+    
+    // Simulate GPS update (in a real app, this would come from the device)
+    function updateGPS() {
+      // Simulate some movement
+      const lat = 19.0760 + (Math.random() - 0.5) * 0.01;
+      const lng = 72.8777 + (Math.random() - 0.5) * 0.01;
+      
+      marker.setLatLng([lat, lng]);
+      map.setView([lat, lng], 15);
+      gpsReadout.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }
+    
+    // Update GPS every 30 seconds
+    updateGPS();
+    setInterval(updateGPS, 30000);
+    
+    // Initialize sample time for rate calculation
+    lastSampleTime = Date.now();
+    
+    // Initial UI update
+    updateSeverity(0);
+    
+    // Helper function to update chart
+    function updateChart(amp10x, gvec) {
+      if (chart.data.datasets[0].data.length >= MAX_POINTS) {
+        chart.data.datasets[0].data.shift();
+        chart.data.datasets[1].data.shift();
+        chart.data.labels.shift();
+      }
+      
+      chart.data.datasets[0].data.push(amp10x);
+      chart.data.datasets[1].data.push(gvec);
+      chart.data.labels.push(new Date().toLocaleTimeString());
+      chart.update('none');
+    }
+  </script>
+</body>
+</html>
